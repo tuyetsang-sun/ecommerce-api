@@ -1,0 +1,76 @@
+name: ecommerce-monolithic
+
+services:
+  postgres:
+    image: postgres:16-bookworm
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Can khai bao POSTGRES_PASSWORD trong .env}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT}:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: ecommerce-api:local
+
+    init: true
+
+    environment:
+      PORT: ${PORT:?Can khai bao PORT trong .env}
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public"
+      JWT_SECRET: ${JWT_SECRET:?Can khai bao JWT_SECRET trong .env}
+      JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
+
+    ports:
+      - "127.0.0.1:${PORT}:${PORT}"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    command:
+      - sh
+      - -c
+      - >-
+        ./node_modules/.bin/prisma migrate deploy &&
+        node prisma/seed.js &&
+        exec node src/server.js
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:' + process.env.PORT + '/health',
+          { signal: AbortSignal.timeout(3000) })
+          .then(r => process.exit(r.status === 200 ? 0 : 1))
+          .catch(() => process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
